@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="description" content="Voice-first vision assistant for blind and visually impaired users">
+    <title>Vision Assistant - Voice-First for Blind Users</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Fraunces:wght@400;600;700&family=Sora:wght@400;500;600;700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20260211">
+    <style>
+        body {
+            background: #f7f3ed;
+            font-family: "Sora", "Space Grotesk", sans-serif;
+        }
+    </style>
+</head>
+
+<body class="app-body">
+    <div class="app-shell">
+        <header class="topbar">
+            <div class="brand">
+                <h1>SmartVision</h1>
+                <p>Safety + Navigation Assistant</p>
+            </div>
+            <div class="status-indicator" id="statusIndicator">
+                <span class="status-dot"></span>
+                <span id="statusText">Ready</span>
+            </div>
+            <button class="btn btn-outline" id="logoutBtn">Logout</button>
+        </header>
+
+        <main class="content-grid">
+            <section class="panel camera-panel">
+                <div class="panel-header">
+                    <h2>Live Camera</h2>
+                    <div class="video-resize-controls">
+                        <button class="btn btn-chip" id="resizeSmallBtn" title="Small">Small</button>
+                        <button class="btn btn-chip" id="resizeMediumBtn" title="Medium">Medium</button>
+                        <button class="btn btn-chip" id="resizeLargeBtn" title="Large">Large</button>
+                        <button class="btn btn-chip" id="resizeFullscreenBtn" title="Fullscreen">Full</button>
+                    </div>
+                </div>
+                <div class="video-container" id="videoContainer">
+                    <video id="videoElement" autoplay playsinline></video>
+                    <canvas id="canvasElement" style="display: none;"></canvas>
+                    <div class="camera-overlay" id="cameraOverlay">
+                        <p>Camera access required</p>
+                    </div>
+                </div>
+                <div class="controls-row">
+                    <button class="btn btn-primary" id="startCameraBtn">Start Camera</button>
+                    <button class="btn btn-secondary" id="stopCameraBtn" disabled>Stop Camera</button>
+                    <button class="btn btn-ghost" id="describeBtn">Describe</button>
+                    <button class="btn btn-ghost" id="navigateBtn">Navigate</button>
+                    <button class="btn btn-ghost" id="locationBtn">Location</button>
+                    <button class="btn btn-danger" id="stopNavBtn" style="display: none;">Stop Nav</button>
+                    <button class="btn btn-primary" id="addObjectsBtn">Add Object</button>
+                </div>
+                <div class="detections-display" id="detectionsDisplay"></div>
+            </section>
+
+            <section class="panel analytics-panel">
+                <div class="panel-header">
+                    <h2>User History Dashboard</h2>
+                    <select id="sessionSelect" class="form-input compact"></select>
+                </div>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <span>Total Distance</span>
+                        <strong id="statDistance">0 m</strong>
+                    </div>
+                    <div class="stat-card">
+                        <span>Travel Time</span>
+                        <strong id="statTime">0 min</strong>
+                    </div>
+                    <div class="stat-card">
+                        <span>Avg Speed</span>
+                        <strong id="statSpeed">0 m/s</strong>
+                    </div>
+                    <div class="stat-card">
+                        <span>Stops</span>
+                        <strong id="statStops">0</strong>
+                    </div>
+                    <div class="stat-card">
+                        <span>Start -> End</span>
+                        <strong id="statStartEnd">--</strong>
+                    </div>
+                </div>
+                <div class="map-wrap">
+                    <div id="routeMap"></div>
+                </div>
+            </section>
+
+            <section class="panel assist-panel">
+                <div class="panel-header">
+                    <h2>Voice + Alerts</h2>
+                </div>
+                <button class="btn btn-primary btn-block" id="voiceBtn">
+                    <span id="voiceBtnText">Start Voice</span>
+                </button>
+                <div class="voice-status" id="voiceStatus"></div>
+
+                <div class="section-divider"></div>
+
+                <h3 class="section-title">Logs</h3>
+                <div class="announcements-list" id="logs"></div>
+
+                <div class="section-divider"></div>
+
+                <h3 class="section-title">Emergency Contact</h3>
+                <input id="emergencyPhoneInput" class="form-input" placeholder="Emergency phone (e.g., +919876543210)">
+                <button class="btn btn-danger btn-block" id="saveEmergencyPhoneBtn">Save Emergency Contact</button>
+                <p class="hint">Double-press volume up/down within 2 seconds to trigger an alert.</p>
+
+                <div class="section-divider"></div>
+
+                <h3 class="section-title">Announcements</h3>
+                <div class="announcements-list" id="announcementsList"></div>
+
+                <div class="section-divider"></div>
+
+                <h3 class="section-title">Face Login Setup</h3>
+                <div id="faceRegisterContainer" style="display: none; margin-bottom: 10px; text-align: center;">
+                    <video id="registerFaceVideo" autoplay playsinline style="width: 100%; border-radius: 8px;"></video>
+                    <canvas id="registerFaceCanvas" style="display: none;"></canvas>
+                    <button class="btn btn-success btn-block" id="captureRegisterFaceBtn"
+                        style="margin-top: 10px;">Capture & Save Face</button>
+                    <button class="btn btn-danger btn-block" id="cancelRegisterFaceBtn"
+                        style="margin-top: 10px;">Cancel</button>
+                </div>
+                <button class="btn btn-primary btn-block" id="startFaceRegisterBtn">Register Face for Login</button>
+
+                <div class="section-divider"></div>
+
+                <h3 class="section-title">Feedback</h3>
+                <textarea id="feedbackInput" class="form-input" placeholder="Enter your feedback..."
+                    rows="3"></textarea>
+                <button class="btn btn-secondary btn-block" id="submitFeedbackBtn">Submit Feedback</button>
+            </section>
+        </main>
+    </div>
+
+    <div class="modal" id="navigationModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Start Navigation</h2>
+                <button class="modal-close" id="closeNavModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="destinationInput">Destination:</label>
+                    <input type="text" id="destinationInput" placeholder="Enter destination" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label for="modeSelect">Transport Mode:</label>
+                    <select id="modeSelect" class="form-input">
+                        <option value="walking">Walking</option>
+                        <option value="cycling">Cycling</option>
+                        <option value="driving">Driving</option>
+                        <option value="public transport">Public Transport</option>
+                    </select>
+                </div>
+                <button class="btn btn-primary btn-block" id="startNavigationBtn">Start Navigation</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal" id="addObjectsModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Add Personal Objects</h2>
+                <button class="modal-close" id="closeObjectsModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="objectNameInput">Object Name:</label>
+                    <input type="text" id="objectNameInput" placeholder="e.g., my keys, my water bottle"
+                        class="form-input">
+                </div>
+                <div class="form-group">
+                    <label for="objectImageUpload">Upload Image:</label>
+                    <input type="file" id="objectImageUpload" accept="image/*" class="form-input">
+                    <p style="font-size: 12px; color: var(--text-light); margin-top: 5px;">Or use current camera frame
+                    </p>
+                </div>
+                <div class="form-group">
+                    <button class="btn btn-primary btn-block" id="captureCurrentFrameBtn">Use Current Frame</button>
+                </div>
+                <button class="btn btn-success btn-block" id="saveObjectBtn">Save Object</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+
+    <script>
+        const firebaseConfig = {{ firebase_config | tojson | safe }};
+
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+    </script>
+
+    <script src="https://maps.googleapis.com/maps/api/js?key={{ google_maps_api_key }}&callback=initMap" async
+        defer></script>
+    <script src="{{ url_for('static', filename='js/app.js') }}?v=20260410b"></script>
+
+    <script>
+        // Face Registration Logic
+        document.addEventListener('DOMContentLoaded', () => {
+            const startFaceRegisterBtn = document.getElementById('startFaceRegisterBtn');
+            const faceRegisterContainer = document.getElementById('faceRegisterContainer');
+            const registerFaceVideo = document.getElementById('registerFaceVideo');
+            const registerFaceCanvas = document.getElementById('registerFaceCanvas');
+            const captureRegisterFaceBtn = document.getElementById('captureRegisterFaceBtn');
+            const cancelRegisterFaceBtn = document.getElementById('cancelRegisterFaceBtn');
+            let registerStream = null;
+
+            if (startFaceRegisterBtn) {
+                startFaceRegisterBtn.addEventListener('click', async () => {
+                    faceRegisterContainer.style.display = 'block';
+                    startFaceRegisterBtn.style.display = 'none';
+                    try {
+                        registerStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                        registerFaceVideo.srcObject = registerStream;
+                    } catch (err) {
+                        alert('Camera access denied or unavailable');
+                        cancelFaceRegistration();
+                    }
+                });
+            }
+
+            function cancelFaceRegistration() {
+                if (registerStream) {
+                    registerStream.getTracks().forEach(track => track.stop());
+                    registerStream = null;
+                }
+                faceRegisterContainer.style.display = 'none';
+                startFaceRegisterBtn.style.display = 'block';
+            }
+
+            if (cancelRegisterFaceBtn) {
+                cancelRegisterFaceBtn.addEventListener('click', cancelFaceRegistration);
+            }
+
+            if (captureRegisterFaceBtn) {
+                captureRegisterFaceBtn.addEventListener('click', async () => {
+                    registerFaceCanvas.width = registerFaceVideo.videoWidth;
+                    registerFaceCanvas.height = registerFaceVideo.videoHeight;
+                    registerFaceCanvas.getContext('2d').drawImage(registerFaceVideo, 0, 0);
+                    const imageData = registerFaceCanvas.toDataURL('image/jpeg', 0.8);
+
+                    captureRegisterFaceBtn.disabled = true;
+                    captureRegisterFaceBtn.textContent = 'Saving...';
+
+                    const token = localStorage.getItem('access_token');
+
+                    try {
+                        const response = await fetch('/api/register_face', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${token}`
+                            },
+                            body: JSON.stringify({ image: imageData })
+                        });
+
+                        const data = await response.json();
+                        if (data.success) {
+                            // Call global showToast from app.js if available, else alert
+                            if (typeof window.showToast === 'function') {
+                                window.showToast('Face registered successfully! You can now login with your face.', 'success');
+                            } else {
+                                alert('Face registered successfully! You can now login with your face.');
+                            }
+                        } else {
+                            if (typeof window.showToast === 'function') {
+                                window.showToast(data.message || 'Face registration failed', 'error');
+                            } else {
+                                alert(data.message || 'Face registration failed');
+                            }
+                        }
+                    } catch (error) {
+                        if (typeof window.showToast === 'function') {
+                            window.showToast(error.message || 'Error occurred during face registration', 'error');
+                        } else {
+                            alert(error.message || 'Error occurred during face registration');
+                        }
+                    } finally {
+                        captureRegisterFaceBtn.disabled = false;
+                        captureRegisterFaceBtn.textContent = 'Capture & Save Face';
+                        cancelFaceRegistration();
+                    }
+                });
+            }
+        });
+    </script>
+</body>
+
+</html>

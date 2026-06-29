@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Login to Vision Assistant">
+    <title>Login - Vision Assistant</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Fraunces:wght@400;600;700&family=Sora:wght@400;500;600;700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20260211">
+    <style>
+        body {
+            background: #f7f3ed;
+            font-family: "Sora", "Space Grotesk", sans-serif;
+        }
+    </style>
+</head>
+
+<body class="auth-body">
+    <div class="auth-container">
+        <div class="auth-card">
+            <div class="auth-header">
+                <h1>Vision Assistant</h1>
+                <p>Smart AI Vision for Everyone</p>
+            </div>
+
+            <div class="auth-form active" id="login-form">
+                <form id="loginForm">
+                    <div class="form-group">
+                        <label for="loginEmail">Email</label>
+                        <input type="email" id="loginEmail" class="form-input" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="loginPassword">Password</label>
+                        <input type="password" id="loginPassword" class="form-input" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-block">Login</button>
+                    <button type="button" id="faceLoginBtn" class="btn btn-secondary btn-block" style="margin-top: 10px;">Login with Face</button>
+
+                    <div id="faceLoginContainer" style="display: none; margin-top: 15px; text-align: center;">
+                        <video id="faceVideo" autoplay playsinline style="width: 100%; border-radius: 8px;"></video>
+                        <canvas id="faceCanvas" style="display: none;"></canvas>
+                        <p class="hint" style="margin-top: 8px; font-size: 13px;">Look at the camera, blink, and move your head slightly.</p>
+                        <p id="faceLoginStatus" class="hint" style="margin-top: 6px; font-size: 13px;">Preparing camera...</p>
+                        <button type="button" id="captureFaceBtn" class="btn btn-success btn-block" style="margin-top: 10px;">Capture & Login</button>
+                        <button type="button" id="cancelFaceBtn" class="btn btn-danger btn-block" style="margin-top: 10px;">Cancel</button>
+                    </div>
+                </form>
+                <p class="auth-link">
+                    New here? <a href="/signup">Create an account</a>
+                </p>
+            </div>
+
+            <div class="auth-footer">
+                <p>(c) 2024 Vision Assistant. All rights reserved.</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+
+    <script>
+        const firebaseConfig = {{ firebase_config | tojson | safe }};
+
+        firebase.initializeApp(firebaseConfig);
+
+        const loginForm = document.getElementById('loginForm');
+        const faceLoginBtn = document.getElementById('faceLoginBtn');
+        const faceLoginContainer = document.getElementById('faceLoginContainer');
+        const faceVideo = document.getElementById('faceVideo');
+        const faceCanvas = document.getElementById('faceCanvas');
+        const captureFaceBtn = document.getElementById('captureFaceBtn');
+        const cancelFaceBtn = document.getElementById('cancelFaceBtn');
+        const faceLoginStatus = document.getElementById('faceLoginStatus');
+
+        const REQUIRED_FACE_LOGIN_FRAMES = 4;
+        let faceStream = null;
+        let autoCaptureTimeout = null;
+        let isFaceSubmitting = false;
+
+        function showToast(message, type = 'info') {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = `toast show toast-${type}`;
+
+            setTimeout(() => {
+                toast.className = 'toast';
+            }, 3000);
+        }
+
+        function setFaceLoginStatus(message) {
+            faceLoginStatus.textContent = message;
+        }
+
+        function clearAutoCaptureTimeout() {
+            if (autoCaptureTimeout) {
+                clearTimeout(autoCaptureTimeout);
+                autoCaptureTimeout = null;
+            }
+        }
+
+        function waitForVideoReady() {
+            if (faceVideo.readyState >= 2 && faceVideo.videoWidth > 0 && faceVideo.videoHeight > 0) {
+                return Promise.resolve();
+            }
+
+            return new Promise((resolve, reject) => {
+                const timeoutId = setTimeout(() => {
+                    cleanup();
+                    reject(new Error('Camera preview did not become ready in time.'));
+                }, 5000);
+
+                function cleanup() {
+                    clearTimeout(timeoutId);
+                    faceVideo.removeEventListener('loadedmetadata', onReady);
+                    faceVideo.removeEventListener('canplay', onReady);
+                    faceVideo.removeEventListener('error', onError);
+                }
+
+                function onReady() {
+                    if (faceVideo.videoWidth > 0 && faceVideo.videoHeight > 0) {
+                        cleanup();
+                        resolve();
+                    }
+                }
+
+                function onError() {
+                    cleanup();
+                    reject(new Error('Unable to read from the camera stream.'));
+                }
+
+                faceVideo.addEventListener('loadedmetadata', onReady);
+                faceVideo.addEventListener('canplay', onReady);
+                faceVideo.addEventListener('error', onError);
+            });
+        }
+
+        function resetFaceLoginUi() {
+            captureFaceBtn.disabled = false;
+            isFaceSubmitting = false;
+            setFaceLoginStatus('Preparing camera...');
+        }
+
+        function cancelFaceLogin() {
+            clearAutoCaptureTimeout();
+            if (faceStream) {
+                faceStream.getTracks().forEach(track => track.stop());
+                faceStream = null;
+            }
+            resetFaceLoginUi();
+            faceLoginContainer.style.display = 'none';
+            faceLoginBtn.style.display = 'block';
+        }
+
+        function captureCurrentFaceFrame() {
+            if (!faceVideo.videoWidth || !faceVideo.videoHeight) {
+                throw new Error('Camera preview is not ready yet.');
+            }
+
+            faceCanvas.width = faceVideo.videoWidth;
+            faceCanvas.height = faceVideo.videoHeight;
+            faceCanvas.getContext('2d').drawImage(faceVideo, 0, 0);
+            return faceCanvas.toDataURL('image/jpeg', 0.8);
+        }
+
+        async function captureFaceSequence() {
+            await waitForVideoReady();
+
+            const frames = [];
+            for (let i = 0; i < REQUIRED_FACE_LOGIN_FRAMES; i++) {
+                setFaceLoginStatus(`Capturing frame ${i + 1}/${REQUIRED_FACE_LOGIN_FRAMES}...`);
+                frames.push(captureCurrentFaceFrame());
+
+                if (i < REQUIRED_FACE_LOGIN_FRAMES - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 700));
+                }
+            }
+
+            setFaceLoginStatus('Verifying liveness and face match...');
+            return frames;
+        }
+
+        async function startFaceCamera() {
+            const email = document.getElementById('loginEmail').value.trim();
+            if (!email) {
+                showToast('Please enter your email first to login with face.', 'error');
+                return;
+            }
+
+            faceLoginContainer.style.display = 'block';
+            faceLoginBtn.style.display = 'none';
+            resetFaceLoginUi();
+
+            try {
+                // Check for secure context (required on mobile for camera access)
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+                    if (!isLocalhost && location.protocol !== 'https:') {
+                        throw new Error('Camera requires HTTPS on mobile devices. Please access via https://' + location.host + location.pathname);
+                    }
+                    throw new Error('Camera API not available. Please use a modern browser (Chrome, Safari, Firefox).');
+                }
+                faceStream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: 640, height: 480 }
+                });
+                faceVideo.srcObject = faceStream;
+                await faceVideo.play();
+                await waitForVideoReady();
+
+                setFaceLoginStatus('Camera ready. Blink naturally when capture starts.');
+                clearAutoCaptureTimeout();
+                autoCaptureTimeout = setTimeout(() => {
+                    if (faceStream && !isFaceSubmitting) {
+                        captureFaceBtn.click();
+                    }
+                }, 1500);
+
+                showToast('Position your face in the camera and look at it.', 'info');
+            } catch (err) {
+                showToast(err.message || 'Camera access denied or unavailable', 'error');
+                cancelFaceLogin();
+            }
+        }
+
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+
+            try {
+                const userCredential = await firebase.auth().signInWithEmailAndPassword(email, password);
+                const user = userCredential.user;
+                const idToken = await user.getIdToken();
+
+                localStorage.setItem('access_token', idToken);
+                localStorage.setItem('user_id', user.uid);
+
+                showToast('Login successful! Redirecting...', 'success');
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, 1500);
+            } catch (error) {
+                showToast(error.message || 'Login failed', 'error');
+            }
+        });
+
+        faceLoginBtn.addEventListener('click', startFaceCamera);
+        cancelFaceBtn.addEventListener('click', cancelFaceLogin);
+
+        captureFaceBtn.addEventListener('click', async () => {
+            const email = document.getElementById('loginEmail').value.trim();
+            if (!email) {
+                showToast('Please enter your email first to login with face.', 'error');
+                return;
+            }
+
+            if (isFaceSubmitting) {
+                return;
+            }
+
+            isFaceSubmitting = true;
+            captureFaceBtn.disabled = true;
+            clearAutoCaptureTimeout();
+
+            try {
+                const frames = await captureFaceSequence();
+                showToast('Verifying face...', 'info');
+
+                const response = await fetch('/api/face_login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: email, images: frames })
+                });
+
+                const data = await response.json();
+                if (data.success && data.custom_token) {
+                    const userCredential = await firebase.auth().signInWithCustomToken(data.custom_token);
+                    const idToken = await userCredential.user.getIdToken();
+
+                    localStorage.setItem('access_token', idToken);
+                    localStorage.setItem('user_id', userCredential.user.uid);
+
+                    showToast('Face login successful! Redirecting...', 'success');
+                    setTimeout(() => {
+                        window.location.href = '/';
+                    }, 1500);
+                    return;
+                }
+
+                showToast(data.message || 'Face login failed', 'error');
+            } catch (error) {
+                showToast(error.message || 'Error occurred during face login', 'error');
+            } finally {
+                cancelFaceLogin();
+            }
+        });
+    </script>
+</body>
+
+</html>

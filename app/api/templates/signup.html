@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Create your Vision Assistant account">
+    <title>Sign Up - Vision Assistant</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Fraunces:wght@400;600;700&family=Sora:wght@400;500;600;700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=20260211">
+    <style>
+        body {
+            background: #f7f3ed;
+            font-family: "Sora", "Space Grotesk", sans-serif;
+        }
+    </style>
+</head>
+
+<body class="auth-body">
+    <div class="auth-container">
+        <div class="auth-card">
+            <div class="auth-header">
+                <h1>Vision Assistant</h1>
+                <p>Smart AI Vision for Everyone</p>
+            </div>
+
+            <div class="auth-form active" id="signup-form">
+                <!-- Persistent error banner -->
+                <div id="signupErrorBanner" style="display:none; background:#fff0f0; border:1px solid #e74c3c; color:#c0392b; border-radius:8px; padding:10px 14px; margin-bottom:14px; font-size:14px; line-height:1.4;"></div>
+
+                <form id="signupForm">
+                    <div class="form-group">
+                        <label for="signupEmail">Email</label>
+                        <input type="email" id="signupEmail" class="form-input" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="signupFullName">Full Name</label>
+                        <input type="text" id="signupFullName" class="form-input" placeholder="Optional">
+                    </div>
+                    <div class="form-group">
+                        <label for="signupPassword">Password</label>
+                        <input type="password" id="signupPassword" class="form-input" required minlength="6">
+                    </div>
+                    <div class="form-group">
+                        <label for="confirmPassword">Confirm Password</label>
+                        <input type="password" id="confirmPassword" class="form-input" required>
+                    </div>
+
+                    <div class="form-group" style="margin-top: 10px;">
+                        <button type="button" class="btn btn-secondary btn-block" id="startFaceCaptureBtn">Set Up Face</button>
+                    </div>
+                    <div id="faceCaptureContainer" style="display: none; margin-bottom: 15px; text-align: center;">
+                        <video id="signupFaceVideo" autoplay playsinline style="width: 100%; border-radius: 8px;"></video>
+                        <canvas id="signupFaceCanvas" style="display: none;"></canvas>
+                        <div id="faceEnrollmentProgress" style="display: none; margin-top: 10px;">
+                            <p class="hint" style="margin: 5px 0;">Look at camera and move your head slowly...</p>
+                            <div style="background: #e0e0e0; border-radius: 10px; height: 20px; overflow: hidden; margin: 10px 0;">
+                                <div id="enrollmentProgressBar"
+                                    style="background: linear-gradient(90deg, #4CAF50, #8BC34A); width: 0%; height: 100%; transition: width 0.3s;"></div>
+                            </div>
+                            <p id="enrollmentStatus" style="font-size: 14px; color: #666;">Capturing frame 0/5</p>
+                        </div>
+                        <p class="hint" style="margin-top: 5px; font-size: 13px;">Tip: Look at camera, blink naturally, and rotate your head slightly for best results.</p>
+                        <button type="button" class="btn btn-danger btn-block" id="cancelFaceCaptureBtn" style="margin-top: 10px;">Cancel Face Login</button>
+                    </div>
+
+                    <button type="submit" class="btn btn-success btn-block" id="submitSignupBtn">Create Account</button>
+                </form>
+
+                <p class="auth-link">
+                    Already have an account? <a href="/login">Back to login</a>
+                </p>
+            </div>
+
+            <div class="auth-footer">
+                <p>(c) 2024 Vision Assistant. All rights reserved.</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+
+    <script>
+        const firebaseConfig = {{ firebase_config | tojson | safe }};
+
+        firebase.initializeApp(firebaseConfig);
+
+        const startFaceCaptureBtn = document.getElementById('startFaceCaptureBtn');
+        const faceCaptureContainer = document.getElementById('faceCaptureContainer');
+        const signupFaceVideo = document.getElementById('signupFaceVideo');
+        const signupFaceCanvas = document.getElementById('signupFaceCanvas');
+        const cancelFaceCaptureBtn = document.getElementById('cancelFaceCaptureBtn');
+        const submitSignupBtn = document.getElementById('submitSignupBtn');
+        const faceEnrollmentProgress = document.getElementById('faceEnrollmentProgress');
+        const enrollmentProgressBar = document.getElementById('enrollmentProgressBar');
+        const enrollmentStatus = document.getElementById('enrollmentStatus');
+
+        let signupStream = null;
+        let capturedFrames = [];
+        let isCapturingFrames = false;
+        let captureStartTimeout = null;
+        const REQUIRED_FRAMES = 5;
+
+        function resetEnrollmentUI() {
+            enrollmentProgressBar.style.width = '0%';
+            enrollmentStatus.textContent = `Capturing frame 0/${REQUIRED_FRAMES}`;
+            enrollmentStatus.style.color = '#666';
+        }
+
+        function clearCaptureStartTimeout() {
+            if (captureStartTimeout) {
+                clearTimeout(captureStartTimeout);
+                captureStartTimeout = null;
+            }
+        }
+
+        function waitForVideoReady() {
+            if (signupFaceVideo.readyState >= 2 && signupFaceVideo.videoWidth > 0 && signupFaceVideo.videoHeight > 0) {
+                return Promise.resolve();
+            }
+
+            return new Promise((resolve, reject) => {
+                const timeoutId = setTimeout(() => {
+                    cleanup();
+                    reject(new Error('Camera preview did not become ready in time.'));
+                }, 5000);
+
+                function cleanup() {
+                    clearTimeout(timeoutId);
+                    signupFaceVideo.removeEventListener('loadedmetadata', onReady);
+                    signupFaceVideo.removeEventListener('canplay', onReady);
+                    signupFaceVideo.removeEventListener('error', onError);
+                }
+
+                function onReady() {
+                    if (signupFaceVideo.videoWidth > 0 && signupFaceVideo.videoHeight > 0) {
+                        cleanup();
+                        resolve();
+                    }
+                }
+
+                function onError() {
+                    cleanup();
+                    reject(new Error('Unable to read from the camera stream.'));
+                }
+
+                signupFaceVideo.addEventListener('loadedmetadata', onReady);
+                signupFaceVideo.addEventListener('canplay', onReady);
+                signupFaceVideo.addEventListener('error', onError);
+            });
+        }
+
+        function scheduleFaceEnrollment() {
+            clearCaptureStartTimeout();
+            captureStartTimeout = setTimeout(() => {
+                if (signupStream && !isCapturingFrames && capturedFrames.length < REQUIRED_FRAMES) {
+                    enrollFaceWithMultipleFrames();
+                }
+            }, 1200);
+        }
+
+        function cancelFaceCapture() {
+            clearCaptureStartTimeout();
+            if (signupStream) {
+                signupStream.getTracks().forEach(track => track.stop());
+                signupStream = null;
+            }
+            capturedFrames = [];
+            isCapturingFrames = false;
+            resetEnrollmentUI();
+            faceCaptureContainer.style.display = 'none';
+            startFaceCaptureBtn.style.display = 'block';
+            faceEnrollmentProgress.style.display = 'none';
+        }
+
+        function captureFrame() {
+            if (!signupFaceVideo.videoWidth || !signupFaceVideo.videoHeight) {
+                throw new Error('Camera preview is not ready yet.');
+            }
+
+            signupFaceCanvas.width = signupFaceVideo.videoWidth;
+            signupFaceCanvas.height = signupFaceVideo.videoHeight;
+            const ctx = signupFaceCanvas.getContext('2d');
+            ctx.drawImage(signupFaceVideo, 0, 0);
+            return signupFaceCanvas.toDataURL('image/jpeg', 0.8);
+        }
+
+        async function enrollFaceWithMultipleFrames() {
+            if (isCapturingFrames || capturedFrames.length >= REQUIRED_FRAMES) {
+                return;
+            }
+
+            isCapturingFrames = true;
+
+            try {
+                await waitForVideoReady();
+
+                for (let i = capturedFrames.length; i < REQUIRED_FRAMES; i++) {
+                    const frame = captureFrame();
+                    capturedFrames.push(frame);
+
+                    const progress = ((i + 1) / REQUIRED_FRAMES) * 100;
+                    enrollmentProgressBar.style.width = `${progress}%`;
+                    enrollmentStatus.textContent = `Capturing frame ${i + 1}/${REQUIRED_FRAMES}`;
+
+                    if (i < REQUIRED_FRAMES - 1) {
+                        await new Promise(resolve => setTimeout(resolve, 800));
+                    }
+                }
+
+                enrollmentStatus.textContent = 'Face enrolled successfully!';
+                enrollmentStatus.style.color = '#4CAF50';
+                showToast('Face enrolled! You can now create your account.', 'success');
+            } catch (err) {
+                capturedFrames = [];
+                resetEnrollmentUI();
+                showToast(err.message || 'Could not capture face frames.', 'error');
+            } finally {
+                isCapturingFrames = false;
+            }
+        }
+
+        startFaceCaptureBtn.addEventListener('click', async () => {
+            faceCaptureContainer.style.display = 'block';
+            startFaceCaptureBtn.style.display = 'none';
+            faceEnrollmentProgress.style.display = 'block';
+            capturedFrames = [];
+            resetEnrollmentUI();
+
+            try {
+                signupStream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: 640, height: 480 }
+                });
+                signupFaceVideo.srcObject = signupStream;
+                await signupFaceVideo.play();
+                await waitForVideoReady();
+                scheduleFaceEnrollment();
+                showToast('Look at camera, blink, and move your head slightly', 'info');
+            } catch (err) {
+                showToast('Camera access denied or unavailable', 'error');
+                cancelFaceCapture();
+            }
+        });
+
+        cancelFaceCaptureBtn.addEventListener('click', cancelFaceCapture);
+
+        // Helper: show a persistent error banner that stays visible
+        function showError(message) {
+            const banner = document.getElementById('signupErrorBanner');
+            banner.textContent = message;
+            banner.style.display = 'block';
+            // also show a toast for quick visibility
+            showToast(message, 'error');
+        }
+
+        function clearError() {
+            const banner = document.getElementById('signupErrorBanner');
+            banner.style.display = 'none';
+            banner.textContent = '';
+        }
+
+        // Map Firebase auth error codes to friendly messages
+        function friendlyAuthError(error) {
+            const code = error.code || '';
+            if (code === 'auth/email-already-in-use') return 'An account with this email already exists. Please log in instead.';
+            if (code === 'auth/invalid-email') return 'That email address is not valid. Please check it.';
+            if (code === 'auth/weak-password') return 'Password is too weak. Please use at least 6 characters.';
+            if (code === 'auth/network-request-failed') return 'Network error. Please check your internet connection and try again.';
+            if (code === 'auth/operation-not-allowed') return 'Email/password sign-up is not enabled. Please contact the administrator.';
+            if (code === 'auth/too-many-requests') return 'Too many attempts. Please wait a moment before trying again.';
+            return error.message || 'Signup failed. Please try again.';
+        }
+
+        document.getElementById('signupForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            clearError();
+
+            const email = document.getElementById('signupEmail').value.trim();
+            const full_name = document.getElementById('signupFullName').value.trim();
+            const password = document.getElementById('signupPassword').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+
+            if (password !== confirmPassword) {
+                showError('Passwords do not match. Please re-enter them.');
+                return;
+            }
+
+            if (password.length < 6) {
+                showError('Password must be at least 6 characters long.');
+                return;
+            }
+
+            submitSignupBtn.disabled = true;
+            submitSignupBtn.textContent = 'Creating...';
+
+            try {
+                if (signupStream && capturedFrames.length < REQUIRED_FRAMES) {
+                    if (isCapturingFrames) {
+                        showToast('Finishing face capture. Please wait a moment.', 'info');
+                        submitSignupBtn.disabled = false;
+                        submitSignupBtn.textContent = 'Create Account';
+                        return;
+                    }
+
+                    await enrollFaceWithMultipleFrames();
+                }
+
+                let userCredential;
+                try {
+                    userCredential = await firebase.auth().createUserWithEmailAndPassword(email, password);
+                } catch (authError) {
+                    showError(friendlyAuthError(authError));
+                    submitSignupBtn.disabled = false;
+                    submitSignupBtn.textContent = 'Create Account';
+                    return;
+                }
+
+                const user = userCredential.user;
+                const idToken = await user.getIdToken();
+
+                if (capturedFrames.length >= REQUIRED_FRAMES) {
+                    showToast('Saving face data...', 'info');
+
+                    try {
+                        const response = await fetch('/api/signup_with_face', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${idToken}`
+                            },
+                            body: JSON.stringify({
+                                email: email,
+                                password: password,
+                                full_name: full_name || '',
+                                face_images: capturedFrames
+                            })
+                        });
+
+                        const data = await response.json();
+
+                        if (!data.success) {
+                            showToast(data.message || 'Face registration failed, but account created.', 'warning');
+                        } else if (data.face_enrolled) {
+                            showToast('Account created with face login!', 'success');
+                        } else {
+                            showToast(data.message || 'Account created, but face login was not enabled.', 'warning');
+                        }
+                    } catch (faceErr) {
+                        // Face enrollment failed but the Firebase account was created — don't block signup
+                        showToast('Account created, but face data could not be saved.', 'warning');
+                    }
+                } else {
+                    showToast('Account created successfully!', 'success');
+                }
+
+                localStorage.setItem('access_token', idToken);
+                localStorage.setItem('user_id', user.uid);
+
+                showToast('Redirecting...', 'success');
+                setTimeout(() => {
+                    window.location.replace('/');
+                }, 1200);
+            } catch (error) {
+                showError(friendlyAuthError(error));
+                submitSignupBtn.disabled = false;
+                submitSignupBtn.textContent = 'Create Account';
+            }
+        });
+
+        function showToast(message, type = 'info') {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = `toast show toast-${type}`;
+
+            setTimeout(() => {
+                toast.className = 'toast';
+            }, 3000);
+        }
+    </script>
+</body>
+
+</html>
